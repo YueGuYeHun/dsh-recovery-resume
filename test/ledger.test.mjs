@@ -52,14 +52,14 @@ test('冷却期满 → 放行（已续跑 1 次 → 冷却 10 分钟）', () => 
   assert.equal(checkLedger(d, 's1', NOW + 10 * MIN + 1).allow, true)
 })
 
-test('★ 累计到上限 3 次 → 拒绝（这就是防失控）', () => {
+test('★ 连续 3 次都没带来进展 → 拒绝（这才是防失控）', () => {
   let d = recordAttempt({}, 's1', NOW)
   d = recordAttempt(d, 's1', NOW + 6 * MIN)
   d = recordAttempt(d, 's1', NOW + 12 * MIN)
   assert.equal(d.s1.attempts, 3)
   const v = checkLedger(d, 's1', NOW + 20 * MIN)
   assert.equal(v.allow, false)
-  assert.match(v.why, /上限 3/)
+  assert.match(v.why, /连续 3 次/)
 })
 
 test('★ 到上限之后，等再久也不放行（冷却不能绕过上限）', () => {
@@ -157,9 +157,15 @@ test('★ 清零后退避撤销：这次不该被自己的防失控挡住', () =
   assert.equal(checkLedger(d, 's1', NOW + 5 * MIN).allow, true, '清零后，同样的时刻应放行（退避已撤销）')
 })
 
-test('没有 lastTurnSeq 的旧账本 → 不误判为成功', () => {
+test('★ 没有 lastTurnSeq 的旧账本 → 视为有进展（迁移，2026-09-23 修正）', () => {
+  // 这条断言在 2026-09-23 被**故意反过来**了，原因是实测踩到的坑：
+  // 旧版账本没有 lastTurnSeq，原实现返回 success:false → 判据无声失效 →
+  // 明明任务往前走过了却仍按"连续失败"吃退避 → 网络恢复后也不再有第二次机会。
+  // 现在没有可比对的 seq 时取"对续跑有利"的解读，并标记 migrated 以便观测。
   const d = recordAttempt({}, 's1', NOW)
-  assert.equal(detectProgressSinceLastAttempt(d, 's1', 999).success, false)
+  const r = detectProgressSinceLastAttempt(d, 's1', 999)
+  assert.equal(r.success, true)
+  assert.equal(r.migrated, true)
 })
 
 test('resetAttempts 不改动传入对象（纯函数）', () => {
