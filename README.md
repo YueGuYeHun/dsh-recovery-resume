@@ -53,12 +53,16 @@ DSH 自己**不**保证"重启后任务接着做"。它保证的是另外两件�
 ## 安装
 
 ```bash
-# 从本地目录（开发用）
-dsh plugin --profile web add link:/absolute/path/to/dsh-recovery-resume
+# 直接从 GitHub 安装（推荐）
+dsh plugin --profile web add github:flandre2233/dsh-recovery-resume
 
-# 或从 git 仓库
-dsh plugin --profile web add github:<owner>/<repo>
+# 或先克隆再以本地目录安装（想改代码时用）
+git clone https://github.com/flandre2233/dsh-recovery-resume.git
+dsh plugin --profile web add link:"$(pwd)/dsh-recovery-resume"
 ```
+
+> 没装 `gh` 也能用：`dsh plugin add` 走的是包管理器，`github:` 形式会克隆默认分支的构建产物。
+> 本仓库不含构建步骤（纯 JS，无编译），克隆下来即可用。
 
 装完**重启 DSH**（宿主侧插件不会热加载）：
 
