@@ -305,6 +305,34 @@ bash test/run.sh          # 跑全部；单文件也可以：node test/logic.tes
 
 （本机实测：`logic` 22/22、`ledger` 19/19、`context` 11/11、`failure` 17/17，共 69 个用例，`bash test/run.sh` 退出码 0。）
 
+### 真实验证记录（2026-09-23）
+
+单测之外，三条判据分支都在**真实环境**里跑过一遍。做法是临时把
+`api.deepseek.com` 解析到 `127.0.0.1`（黑洞）来制造真实的模型调用失败，
+再重启宿主观察插件行为。
+
+| 分支 | 做法 | 观测到的证据（`host.log` / 会话事件流原文） |
+|---|---|---|
+| **临时性失败 → 续跑** | 黑洞造成 `code=TRANSPORT` 失败 | `★ 发现未处理的中断（reason=error turnSeq=…）→ 发送续跑消息`；事件流出现 `user/message source=dsh-recovery-resume` |
+| **永久性失败 → 跳过** | 临时写入无效 API key 造成 `code=AUTH status=401` | `跳过 …（上次失败是永久性的，重试无益：HTTP 401（认证/权限） code=AUTH）`，且**没有**续跑消息 |
+| **宿主重启截断 → 续跑 + 重新武装 goal** | `cycle` 重启宿主 | 续跑消息 + `goal/change op=resume`，随后 goal 驱动器自己开了下一轮 |
+
+完整链条（**全程没有任何 `source=user` 消息**，即无人参与）：
+
+```
+turn/end  reason=error  code=TRANSPORT      ← 真实失败
+user/message  source=dsh-recovery-resume    ← 插件续跑（error 分支）
+goal/change  op=resume                      ← 重新武装 goal
+turn/end  reason=interrupted                ← 宿主重启截断
+user/message  source=dsh-recovery-resume    ← 插件续跑（interrupted 分支）
+user/message  source=goal  round=1          ← goal 驱动器自己开轮
+```
+
+> ⚠️ 这些测试需要临时改 `/etc/hosts`，是**有风险的操作**。本仓库不提供自动化脚本 ——
+> 第一次尝试时我因为用 `shutil.copy2`（没带 `sudo`）去还原而失败，**把机器断网了 13 分钟**。
+> 如果将来要复现：① 改动前先用 `sudo -n` 在**目标文件真实路径**上演练"写回"；
+> ② 准备好干净备份与一条人工恢复命令；③ 注意"常驻自愈守护"与"保住故障窗口"是互斥的。
+
 ---
 
 ## 已知限制
@@ -316,6 +344,10 @@ bash test/run.sh          # 跑全部；单文件也可以：node test/logic.tes
 - **不判断"任务是否其实已经完成"**：判据只看 `turn/end` 的 reason 与之后有无新回合/用户消息。
   如果任务在被中断前已经做完了，续跑会多问一轮（消息里要求先核对状态，属于预期行为，
   但仍会消耗一轮）。DSH 的 goal 机制有 `complete` 动作可以表达"做完了"，本插件不代它判断。
+- **错误码表是抄 DSH 官方那份**（`@deepseek-ai/dsh-llm/retry-policy` 的 `DEFAULT_RETRYABLE_CODES`）。
+  DSH 升级后如果这张表变了，本插件需要跟着更新 —— 它的"可重试"判断直接依赖这份名单。
+- **真实测试覆盖到的是"模型调用失败"这一类**（TRANSPORT / AUTH）。工具执行失败、
+  上下文超限等其他失败形态没有单独造过真实场景，只走了单测。
 - **子代理会话不处理**（`session.header.origin === 'subagent'` 直接跳过，与上游一致）。
 - 多标签页/多窗口同时打开同一会话时，靠**宿主侧单实例**与账本去重；本插件本身没有锁。
 
