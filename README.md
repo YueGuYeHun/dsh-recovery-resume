@@ -196,10 +196,25 @@ Agent 自己核对状态、接着做
 
 | 层 | 限制 | 位置 |
 |---|---|---|
-| 1 | **永久性失败不续跑**（认证 / 余额配额 / 模型不存在 / 上下文超限 / 请求非法） | `lib/failure.js` |
+| 1 | **永久性失败不续跑** —— 判据优先用 **DSH 官方码表**（`@deepseek-ai/dsh-llm/retry-policy` 的 `DEFAULT_RETRYABLE_CODES`：`EMPTY_RESPONSE`/`RATE_LIMIT`/`SERVER`/`TIMEOUT`/`TRANSPORT`），已知永久码（`AUTH`/`INVALID_CREDENTIAL`/`QUOTA`/`CONTEXT_WINDOW_EXCEEDED`）与 401/403 直接拦下 | `lib/failure.js` |
 | 2 | 同一宿主内，同一会话最多续 **1** 次 | `MAX_ATTEMPTS_PER_SESSION` |
 | 3 | **跨重启**最多续 **3** 次（落盘） | `lib/ledger.js` → `MAX_ATTEMPTS_ACROSS_RESTARTS` |
-| 4 | **自适应退避**：冷却从 5 分钟起翻倍（5 → 10 → 20 → 30 封顶） | `lib/ledger.js` → `effectiveCooldown` |
+| 4 | **自适应退避**：冷却从 5 分钟起翻倍（5 → 10 → 20 → 30 封顶）；**但续跑成功则清零**（见下） | `lib/ledger.js` → `effectiveCooldown` / `detectProgressSinceLastAttempt` |
+
+### 两条来自真实测试的修正（2026-09-23）
+
+这两条都是**先做了真实链路测试**才发现的，单测和代码审查都没抓到：
+
+1. **错误码漏了 `TRANSPORT`**。第一版我用自己写的正则匹配失败消息，而网络失败的真实码是
+   `TRANSPORT`（`dsh-llm-deepseek` 抛的："DeepSeek Messages transport failed"），
+   正则表里没有它 → 被判成"无法判定"。**修正：改用 DSH 官方的
+   `DEFAULT_RETRYABLE_CODES` 码表**（出处 `@deepseek-ai/dsh-llm/retry-policy`），
+   比自编正则可靠，宿主升级时跟着更新即可。
+2. **自适应退避把成功的续跑也惩罚了** —— 这条更严重。原来的链是：
+   *续跑成功 → 任务继续 → 又被打断 → 冷却已被翻倍到 20 分钟 → **被自己的防失控挡住***。
+   实测日志原文：「距上次续跑仅 243s，冷却中（本次冷却 1200s，还需 957s）」。
+   **修正：退避只惩罚"连续失败"** —— 如果这次的 `turn/end` 比上次续跑时记录的
+   `lastTurnSeq` 更新，说明上次续跑之后任务确实往前走了 → 判定成功 → 计数与冷却清零。
 
 第 1 层和第 4 层是借鉴 `dsh-client-auto-continue` 的做法（它的 `isTransientFailure`
 与 `backoffFactor`）。第 1 层解决的是「上次因为是 API key 无效而失败，续跑必然再失败
@@ -288,7 +303,7 @@ bash test/run.sh          # 跑全部；单文件也可以：node test/logic.tes
 每个用例都钉一个边界，尤其偏重「**不该动**」的情形：用户主动暂停 / blocked / aborted 的
 目标绝不重新武装、太老的中断不翻旧账、账本到上限后等再久也不放行。
 
-（本机实测：`logic` 22/22、`ledger` 12/12、`context` 11/11、`failure` 11/11，`bash test/run.sh` 退出码 0。）
+（本机实测：`logic` 22/22、`ledger` 19/19、`context` 11/11、`failure` 17/17，共 69 个用例，`bash test/run.sh` 退出码 0。）
 
 ---
 

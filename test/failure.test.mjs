@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { failureFacts, isTransientFailure } from '../lib/failure.js'
+import { failureFacts, isTransientFailure, DSH_RETRYABLE_CODES, PERMANENT_CODES } from '../lib/failure.js'
 
 let pass = 0
 let fail = 0
@@ -96,7 +96,46 @@ test('★ 判据偏保守：看不清原因时放行（宁可多试一次）', (
 
 test('why 里带上可复核的原因（便于日志排查）', () => {
   assert.match(isTransientFailure({ status: 401 }).why, /401/)
-  assert.match(isTransientFailure({ message: 'network error' }).why, /临时性/)
+  assert.match(isTransientFailure({ message: 'network error' }).why, /可重试|保守|无法判定/)
+})
+
+console.log('── ★ DSH 官方码表（权威判据，不是我的正则）──')
+
+test('★ TRANSPORT（真实网络失败码）→ 续跑（这就是真实测试抓到的漏洞）', () => {
+  const v = isTransientFailure({ code: 'TRANSPORT', message: 'DeepSeek Messages transport failed' })
+  assert.equal(v.retry, true)
+  assert.equal(v.source, 'dsh-retry-policy')
+})
+
+test('★ DSH 官方五个可重试码全部放行', () => {
+  for (const code of DSH_RETRYABLE_CODES) {
+    const v = isTransientFailure({ code })
+    assert.equal(v.retry, true, `${code} 应放行`)
+  }
+  assert.deepEqual([...DSH_RETRYABLE_CODES].sort(), ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'])
+})
+
+test('★ 已知永久性码全部拦下', () => {
+  for (const code of PERMANENT_CODES) {
+    const v = isTransientFailure({ code })
+    assert.equal(v.retry, false, `${code} 应拦下`)
+  }
+})
+
+test('★ AUTH（实测的真实码，配 401）→ 拦下', () => {
+  const v = isTransientFailure({ code: 'AUTH', status: 401, message: 'Authentication Fails, Your api key: ****0000 is invalid' })
+  assert.equal(v.retry, false)
+})
+
+test('码不分大小写（源码里是大写，但不该假设调用方一定给大写）', () => {
+  assert.equal(isTransientFailure({ code: 'transport' }).retry, true)
+  assert.equal(isTransientFailure({ code: 'auth' }).retry, false)
+})
+
+test('未知码 → 放行（保守），并标明来源是保守默认', () => {
+  const v = isTransientFailure({ code: 'SOMETHING_NEW' })
+  assert.equal(v.retry, true)
+  assert.equal(v.source, 'conservative-default')
 })
 
 console.log(`\n  failure: PASS=${pass} FAIL=${fail}`)

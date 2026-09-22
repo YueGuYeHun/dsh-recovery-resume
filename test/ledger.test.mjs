@@ -10,7 +10,10 @@
  */
 
 import assert from 'node:assert/strict'
-import { checkLedger, recordAttempt, pruneLedger, effectiveCooldown } from '../lib/ledger.js'
+import {
+  checkLedger, recordAttempt, pruneLedger, effectiveCooldown,
+  detectProgressSinceLastAttempt, resetAttempts, recordAttemptWithTurn,
+} from '../lib/ledger.js'
 
 let pass = 0
 let fail = 0
@@ -115,9 +118,6 @@ test('保留期内的条目不动', () => {
   assert.deepEqual(Object.keys(pruneLedger(d, NOW)), ['s1'])
 })
 
-console.log(`\n  ledger: PASS=${pass} FAIL=${fail}`)
-process.exit(fail === 0 ? 0 : 1)
-
 console.log('── effectiveCooldown（自适应退避）──')
 
 test('★ 冷却随尝试次数翻倍、且有上限', () => {
@@ -134,3 +134,40 @@ test('★ 连续失败时，固定 5 分钟挡不住的情形被退避挡住', (
   assert.equal(checkLedger(d, 's1', NOW + 6 * MIN).allow, false, '6 分钟时仍应在冷却中')
   assert.equal(checkLedger(d, 's1', NOW + 10 * MIN + 1).allow, true)
 })
+
+console.log('── ★ 退避前的"上次成功了吗"判定（实测修正的设计缺陷）──')
+
+test('★ 上次续跑之后有新 turn/end → 判定成功（应清零退避）', () => {
+  const d = recordAttemptWithTurn({}, 's1', NOW, 100)
+  assert.equal(detectProgressSinceLastAttempt(d, 's1', 200).success, true)
+})
+
+test('★ 同一个 turn/end（没进展）→ 不算成功（冷却继续生效）', () => {
+  const d = recordAttemptWithTurn({}, 's1', NOW, 100)
+  assert.equal(detectProgressSinceLastAttempt(d, 's1', 100).success, false)
+})
+
+test('★ 清零后退避撤销：这次不该被自己的防失控挡住', () => {
+  // 判据说明（我第一版把这条写错了）：不能在 60 分钟处断言"被挡住"——
+  // 第 1 次续跑的冷却经退避后只有 10 分钟，60 分钟早就过了，那条断言本身不成立。
+  // 正确的判据是在**冷却期内**比较"清零前 vs 清零后"：
+  let d = recordAttemptWithTurn({}, 's1', NOW, 100)
+  assert.equal(checkLedger(d, 's1', NOW + 5 * MIN).allow, false, '未清零时，5 分钟内应被退避挡住')
+  d = resetAttempts(d, 's1')
+  assert.equal(checkLedger(d, 's1', NOW + 5 * MIN).allow, true, '清零后，同样的时刻应放行（退避已撤销）')
+})
+
+test('没有 lastTurnSeq 的旧账本 → 不误判为成功', () => {
+  const d = recordAttempt({}, 's1', NOW)
+  assert.equal(detectProgressSinceLastAttempt(d, 's1', 999).success, false)
+})
+
+test('resetAttempts 不改动传入对象（纯函数）', () => {
+  const d = recordAttemptWithTurn({}, 's1', NOW, 1)
+  const before = JSON.stringify(d)
+  resetAttempts(d, 's1')
+  assert.equal(JSON.stringify(d), before)
+})
+
+console.log(`\n  ledger: PASS=${pass} FAIL=${fail}`)
+process.exit(fail === 0 ? 0 : 1)
