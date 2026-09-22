@@ -1,0 +1,5 @@
+# 宿主侧插件：重启后自动续跑被中断的任务。
+# 挂载方式与 dsh-client-auto-continue 相同（bundle patch → insert 一行）。
+- insert:
+    - id: recovery-resume
+      name: 'dsh-recovery-resume'

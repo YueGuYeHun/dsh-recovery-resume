@@ -1,0 +1,6 @@
+# 宿主包软链（为了让 @deepseek-ai/* 解析得到，见 README「依赖说明」）
+node_modules/
+
+# 编辑器 / 系统
+.DS_Store
+*.log

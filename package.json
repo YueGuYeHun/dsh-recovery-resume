@@ -1,0 +1,36 @@
+{
+  "name": "dsh-recovery-resume",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "description": "DSH host plugin: resumes turns interrupted by a host restart, requiring the agent to verify real-world state before continuing",
+  "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bash test/run.sh"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "crash-recovery",
+    "resume",
+    "interrupted"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "*"
+  }
+}
