@@ -192,9 +192,18 @@ Agent 自己核对状态、接着做
 
 | 层 | 限制 | 位置 |
 |---|---|---|
-| 1 | 同一宿主内，同一会话最多续 **1** 次 | `MAX_ATTEMPTS_PER_SESSION` |
-| 2 | **跨重启**最多续 **3** 次（落盘） | `lib/ledger.js` → `MAX_ATTEMPTS_ACROSS_RESTARTS` |
-| 3 | 两次续跑之间至少间隔 **5 分钟** | `lib/ledger.js` → `COOLDOWN_MS` |
+| 1 | **永久性失败不续跑**（认证 / 余额配额 / 模型不存在 / 上下文超限 / 请求非法） | `lib/failure.js` |
+| 2 | 同一宿主内，同一会话最多续 **1** 次 | `MAX_ATTEMPTS_PER_SESSION` |
+| 3 | **跨重启**最多续 **3** 次（落盘） | `lib/ledger.js` → `MAX_ATTEMPTS_ACROSS_RESTARTS` |
+| 4 | **自适应退避**：冷却从 5 分钟起翻倍（5 → 10 → 20 → 30 封顶） | `lib/ledger.js` → `effectiveCooldown` |
+
+第 1 层和第 4 层是借鉴 `dsh-client-auto-continue` 的做法（它的 `isTransientFailure`
+与 `backoffFactor`）。第 1 层解决的是「上次因为是 API key 无效而失败，续跑必然再失败
+一次，白烧一轮」；第 4 层解决的是「固定 5 分钟在持续失败时会稳定地一直烧下去」。
+
+**没有借鉴它的循环守卫**：那 4 个信号（连续相同消息 / 流式近似重复 / 短句空转 /
+同工具同参数重复）都来自**对运行中回合的实时观察**，而本插件只在宿主重启后触发，
+拿不到这些信号 —— 照搬会变成死代码。
 
 超过任一层限制时**只写日志、不再自动续跑**，把决定权交回给人。
 
@@ -275,7 +284,7 @@ bash test/run.sh          # 跑全部；单文件也可以：node test/logic.tes
 每个用例都钉一个边界，尤其偏重「**不该动**」的情形：用户主动暂停 / blocked / aborted 的
 目标绝不重新武装、太老的中断不翻旧账、账本到上限后等再久也不放行。
 
-（本机实测：`logic` 22/22、`ledger` 12/12、`context` 11/11，`bash test/run.sh` 退出码 0。）
+（本机实测：`logic` 22/22、`ledger` 12/12、`context` 11/11、`failure` 11/11，`bash test/run.sh` 退出码 0。）
 
 ---
 

@@ -10,7 +10,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { checkLedger, recordAttempt, pruneLedger } from '../lib/ledger.js'
+import { checkLedger, recordAttempt, pruneLedger, effectiveCooldown } from '../lib/ledger.js'
 
 let pass = 0
 let fail = 0
@@ -42,9 +42,11 @@ test('刚续过（冷却中）→ 拒绝，且原因说明还需等多久', () =
   assert.match(v.why, /冷却中/)
 })
 
-test('冷却期满 → 放行', () => {
+test('冷却期满 → 放行（已续跑 1 次 → 冷却 10 分钟）', () => {
   const d = recordAttempt({}, 's1', NOW)
-  assert.equal(checkLedger(d, 's1', NOW + 5 * MIN + 1).allow, true)
+  // 自适应退避：第 1 次之后冷却翻倍为 10 分钟，所以 5 分钟时**仍应被拒**
+  assert.equal(checkLedger(d, 's1', NOW + 5 * MIN + 1).allow, false)
+  assert.equal(checkLedger(d, 's1', NOW + 10 * MIN + 1).allow, true)
 })
 
 test('★ 累计到上限 3 次 → 拒绝（这就是防失控）', () => {
@@ -115,3 +117,20 @@ test('保留期内的条目不动', () => {
 
 console.log(`\n  ledger: PASS=${pass} FAIL=${fail}`)
 process.exit(fail === 0 ? 0 : 1)
+
+console.log('── effectiveCooldown（自适应退避）──')
+
+test('★ 冷却随尝试次数翻倍、且有上限', () => {
+  assert.equal(effectiveCooldown(0), 5 * MIN)
+  assert.equal(effectiveCooldown(1), 10 * MIN)
+  assert.equal(effectiveCooldown(2), 20 * MIN)
+  assert.equal(effectiveCooldown(3), 30 * MIN, '应封顶在 30 分钟')
+  assert.equal(effectiveCooldown(9), 30 * MIN)
+})
+
+test('★ 连续失败时，固定 5 分钟挡不住的情形被退避挡住', () => {
+  let d = recordAttempt({}, 's1', NOW)
+  // 第 1 次续跑后：要等 10 分钟（不是 5 分钟）
+  assert.equal(checkLedger(d, 's1', NOW + 6 * MIN).allow, false, '6 分钟时仍应在冷却中')
+  assert.equal(checkLedger(d, 's1', NOW + 10 * MIN + 1).allow, true)
+})
