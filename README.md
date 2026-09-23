@@ -71,38 +71,38 @@ dsh plugin --profile web add link:"$(pwd)/dsh-recovery-resume"
 # 或者：退出 app 再打开
 ```
 
-### 依赖说明（重要）
+### 依赖说明：零宿主依赖（不需要 `node_modules`）
 
-插件运行时 `import { createUserMessage } from '@deepseek-ai/dsh-llm'` —— 这个包由 DSH 提供，
-不在 npm 上单独发布。如果你的插件源码放在 `$DSH_HOME` **之外**（例如 `~/Documents/...`）
-再软链进 profile，Node 会从**真实路径**往上找 `node_modules`，从而**解析不到**这个包，
-报 `Cannot find package '@deepseek-ai/dsh-llm'` —— **这会让整棵插件树崩溃**。
+本插件**不 import 任何 `@deepseek-ai/*` 包**，运行时只依赖 Node 内置模块
+（`node:crypto`/`node:fs`/`node:path`）。所以 clone 下来直接装即可，
+**不需要**在自己的插件目录里造软链，也不会有"解析不到宿主包"的崩溃。
 
-解决办法：在插件目录里放一个软链。
+这一点是**实测确认**的，不是设计声明：把插件目录里的 `node_modules/` 整个删掉后，
+`import(插件入口)` 仍然成功，并且导出 `apply`/`name` 两个符号。
 
-```bash
-mkdir -p node_modules/@deepseek-ai
-ln -sfn "$(dirname "$(readlink -f "$(which dsh)")")/../node_modules/@deepseek-ai/dsh-llm" \
-        node_modules/@deepseek-ai/dsh-llm
-```
+历史说明（给读旧版本的你）：**初版**曾 `import { createUserMessage }
+from '@deepseek-ai/dsh-llm'`。那个包只在 DSH 安装目录里，且插件目录里的软链指向
+**绝对路径**、又被 `.gitignore` 挡住 —— 意味着**别人 clone 下来装，会直接崩**
+（实测：临时移走软链后立刻 `MODULE_NOT_FOUND`）。
+现在消息构造器内联在 `lib/message.js`，只有 4 个字段（`id`/`role`/`content`/`source`），
+安全性依据见该文件头部注释（宿主不校验消息、`id` 只需唯一、`source` 是纯数据）。
 
-（本机的实际做法见 `package.json` 注释与仓库根的 `.gitignore`；`node_modules/` 不入库。）
+### 为什么没有 `peerDependencies`
 
-### 为什么 `peerDependencies` 用 `"*"`
+不需要。**判断依据是实测而非推测**：本插件对宿主能力的依赖全部通过挂载点的 `ctx`
+（`ctx.inject(['agents', 'goals'])`、`ctx.goals.resume`）与运行时对象
+（`session.snapshotEvents()`、`agent.followup()`）发生 —— 这些**不走模块解析**，
+所以没有需要声明的包。
 
-awesome-dsh-plugin 的贡献指南建议给官方 `@deepseek-ai/*` 包声明"带显式预发布分支"的 peer 范围
-（示例：`>=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0`）。**实测这个范围匹配不到任何
-当前版本**：node-semver 7.8.5 下它对 `0.1.6-alpha.1` 与 `0.1.7-alpha.2` 都是 `false`。
-
-原因是 semver 的预发布规则是**逐元组**的：只有当范围里某个比较符的
-`major.minor.patch` 与目标版本**完全一致**、且自身带预发布标签时，该预发布版本才被放行。
-上面示例的比较符落在 `0.1.0` 元组上，而实际版本是 `0.1.6-*`，于是被静默排除。
-实测能匹配的写法都必须钉在具体元组上（`>=0.1.6-alpha.1 <0.2.0-0` 或 `^0.1.6-alpha.1`），
-**没有**一个范围能表达"覆盖整条 0.1.x 预发布线"。
-
-因此这里用 `"*"`：它不做版本门禁，也就不会在用户升级 DSH 之后误报"不支持"——
-对一个随预发布线频繁变动的宿主来说，这比一个"看起来严格、实际匹配不到"的范围更不容易出错。
-实际的兼容性依据是「已知限制」一节里写明的实测版本。
+（附带一条实测记录，供其他插件作者参考：awesome-dsh-plugin 的贡献指南建议给官方
+`@deepseek-ai/*` 包声明"带显式预发布分支"的 peer 范围，例如
+`>=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0`。**实测这个范围匹配不到任何当前版本**：
+node-semver 7.8.5 下它对 `0.1.6-alpha.1` 与 `0.1.7-alpha.2` 都返回 `false`。
+原因是 semver 的预发布规则**逐元组**生效：只有范围内某个比较符的
+`major.minor.patch` 与目标版本完全一致、且自身带预发布标签时，该预发布版本才被放行。
+上面示例的比较符落在 `0.1.0` 元组，而实际版本是 `0.1.6-*`，于是被静默排除。
+能匹配的写法都必须钉死在具体元组上（`>=0.1.6-alpha.1 <0.2.0-0`），
+**没有一个范围能表达"覆盖整条 0.1.x 预发布线"**。这条记录不影响本插件，因为本插件没有 peer 依赖。）
 
 ---
 
@@ -286,7 +286,7 @@ dsh --profile web --dump-config | grep -A2 recovery-resume
 |---|---|
 | `host.log` 里一行 `dsh-recovery-resume` 都没有 | 插件没被加载：先跑上面的 `--dump-config`；确认装完**重启过**宿主 |
 | `读不到 … 的事件流（既没有 snapshotEvents() 也没有 events）` | DSH 版本的会话 API 变了。当前写法：优先 `session.snapshotEvents()`，回退属性 `session.events` |
-| `Cannot find package '@deepseek-ai/dsh-llm'` | 见上面「依赖说明」，**会导致整棵插件树崩溃** |
+| `Cannot find package '@deepseek-ai/dsh-llm'` | **0.1.0 之前版本的问题，现已不存在** —— 插件改为零宿主依赖（见上面「依赖说明」）。如果还见到这个报错，说明装的是旧版本 |
 | 插件把整棵树搞崩、DSH 起不来 | 从 `$DSH_HOME/profiles/web/package.json` 的 `dependencies` 与 `dsh.profile.bundles` 里删掉本插件，再 `dsh plugin --profile web install` |
 
 ---
@@ -303,7 +303,7 @@ bash test/run.sh          # 跑全部；单文件也可以：node test/logic.tes
 每个用例都钉一个边界，尤其偏重「**不该动**」的情形：用户主动暂停 / blocked / aborted 的
 目标绝不重新武装、太老的中断不翻旧账、账本到上限后等再久也不放行。
 
-（本机实测：`logic` 22/22、`ledger` 19/19、`context` 11/11、`failure` 17/17，共 69 个用例，`bash test/run.sh` 退出码 0。）
+（本机实测：`logic` 22/22、`ledger` 19/19、`context` 11/11、`failure` 17/17、`message` 13/13，共 82 个用例，`bash test/run.sh` 退出码 0。）
 
 ### 真实验证记录（2026-09-23）
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-recovery-resume",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "lib/index.js",
   "dsh": {
@@ -29,8 +29,5 @@
   ],
   "engines": {
     "node": ">=20"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*"
   }
 }
