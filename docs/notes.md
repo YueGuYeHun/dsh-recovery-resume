@@ -166,7 +166,10 @@ Agent 自己核对状态、接着做
 
 插件用 `console.log` / `console.error` 直写（**不是** `ctx.logger`）。
 实测：`ctx.logger.info` 的输出在 DSH 的 host 日志里**一行都找不到**，用它排查会白费一轮。
-`console.log` 会进 host 的 stdout，即 `$DSH_HOME/host.log`。
+`console.log` 会进 DSH 进程的 stdout —— **具体落到哪取决于谁起了它**：
+手动 `dsh web` 就是终端；fork host 的启动器（如本仓库配套的那个）会把它重定向到
+`$DSH_HOME/host.log`。**`host.log` 是启动器造的文件，不是 DSH 自带的**，
+所以文档里不能假定它存在。
 
 一次成功的续跑长这样：
 
@@ -192,7 +195,7 @@ dsh-recovery-resume: 不重新武装 goal（phase=complete（只处理 active）
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| `host.log` 里一行 `dsh-recovery-resume` 都没有 | 插件没被加载：先跑 `dsh --profile web --dump-config \| grep -A2 recovery-resume`；确认装完**重启过** DSH |
+| 插件的 stdout 里一行 `dsh-recovery-resume` 都没有 | 插件没被加载：先跑 `dsh --profile web --dump-config \| grep -A2 recovery-resume`；确认装完**重启过** DSH |
 | `读不到 … 的事件流（既没有 snapshotEvents() 也没有 events）` | DSH 版本的会话 API 变了。当前写法：优先 `session.snapshotEvents()`，回退属性 `session.events` |
 | `Cannot find package '@deepseek-ai/dsh-llm'` | **初版的问题，现已不存在** —— 插件改为零 host 依赖（见 README「安装」）。还见到说明装的是旧版本 |
 | 插件把整棵树搞崩、DSH 起不来 | 从 `$DSH_HOME/profiles/web/package.json` 的 `dependencies` 与 `dsh.profile.bundles` 里删掉本插件，再 `dsh plugin --profile web install` |
@@ -205,11 +208,11 @@ dsh-recovery-resume: 不重新武装 goal（phase=complete（只处理 active）
 `api.deepseek.com` 解析到 `127.0.0.1`（黑洞）来制造真实的模型调用失败，
 再重启 DSH 观察插件行为。
 
-| 分支 | 做法 | 观测到的证据（`host.log` / 会话事件流原文） |
+| 分支 | 做法 | 观测到的证据（插件 stdout / 会话事件流原文） |
 |---|---|---|
 | **临时性失败 → 续跑** | 黑洞造成 `code=TRANSPORT` 失败 | `★ 发现未处理的中断（reason=error turnSeq=…）→ 发送续跑消息`；事件流出现 `user/message source=dsh-recovery-resume` |
 | **永久性失败 → 跳过** | 临时写入无效 API key 造成 `code=AUTH status=401` | `跳过 …（上次失败是永久性的，重试无益：HTTP 401（认证/权限） code=AUTH）`，且**没有**续跑消息 |
-| **服务重启截断 → 续跑 + 重新武装 goal** | `cycle` 重启 | 续跑消息 + `goal/change op=resume`，随后 goal 驱动器自己开了下一轮 |
+| **DSH 重启截断 → 续跑 + 重新武装 goal** | `cycle` 重启 | 续跑消息 + `goal/change op=resume`，随后 goal 驱动器自己开了下一轮 |
 
 完整链条（**全程没有任何 `source=user` 消息**，即无人参与）：
 

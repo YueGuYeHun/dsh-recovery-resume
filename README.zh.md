@@ -55,7 +55,15 @@ dsh plugin --profile web add github:flandre2233/dsh-recovery-resume
 
 ```sh
 dsh --profile web --dump-config | grep -A2 recovery-resume   # 插件加载了吗
-tail -50 ~/.dsh/host.log | grep dsh-recovery-resume          # 它做了什么判断
+```
+
+要看它的判断，得找你的 DSH 进程把 stdout 写到哪：插件用 `console.log`，
+所以这些行会出现在跑 `dsh web` 的那个终端里，或者出现在你的启动器把它重定向到的地方
+（fork host 的 app 包通常追加到 `~/.dsh/host.log` —— **那是启动器造的文件，不是 DSH 的**；
+手动起 DSH 就不会有它）。按名字过滤：
+
+```sh
+grep dsh-recovery-resume ~/.dsh/host.log   # 如果你的启动器会写这个文件
 ```
 
 触发时长这样：

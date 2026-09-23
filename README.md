@@ -58,7 +58,16 @@ counter resets. Over the limit, it logs and stops.
 
 ```sh
 dsh --profile web --dump-config | grep -A2 recovery-resume   # loaded?
-tail -50 ~/.dsh/host.log | grep dsh-recovery-resume          # what it decided
+```
+
+For what it decided, look where your DSH process writes stdout: the plugin logs with
+`console.log`, so the lines appear in the terminal running `dsh web`, or in whatever your
+launcher redirects that stream to (an app bundle that forks the host typically appends it to
+`~/.dsh/host.log` — that file is the launcher's, not DSH's, and will not exist if you start
+DSH by hand). Grep for `dsh-recovery-resume`:
+
+```sh
+grep dsh-recovery-resume ~/.dsh/host.log   # if your launcher writes one
 ```
 
 A trigger looks like this:
