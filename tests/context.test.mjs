@@ -2,7 +2,7 @@
  * 最小上下文提取单测：extractKeyPoints / clip / contentText
  *
  * 零依赖，脱离 DSH 直接跑：
- *   node test/context.test.mjs
+ *   node tests/context.test.mjs
  *
  * 重点钉两件事：
  *   ① 只认**结构性**的结局未知标记（`data.error.code`），不要把正文里出现的同名

@@ -257,7 +257,7 @@ user/message  source=goal  round=1          ← goal 驱动器自己开轮
 顺带修掉一处**自造字段**：`source` 里曾多传 `turnSeq`，而它在 dsh-llm 的类型定义里
 **零命中**（官方只有 `{ kind: 'plugin', plugin: string } & ContextFormed`）。
 
-**防回归**：`test/message.test.mjs` 在**清空 `NODE_PATH` 的子进程**里导入模块，
+**防回归**：`tests/message.test.mjs` 在**清空 `NODE_PATH` 的子进程**里导入模块，
 并扫描整个 `lib/` 不许出现 `@deepseek-ai/` 的 import。
 
 ### 7.1 一条给其他插件作者的记录：peer 范围匹配不到预发布版本

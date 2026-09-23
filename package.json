@@ -18,7 +18,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "bash test/run.sh"
+    "test": "bash tests/run.sh"
   },
   "keywords": [
     "dsh",

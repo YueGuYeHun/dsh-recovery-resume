@@ -80,7 +80,7 @@ dsh-recovery-resume: 已重新武装 goal …
 ## 测试
 
 ```sh
-bash test/run.sh    # 82 个用例，零依赖，不需要 DSH 在运行
+bash tests/run.sh    # 82 个用例，零依赖，不需要 DSH 在运行
 ```
 
 ## 已知限制

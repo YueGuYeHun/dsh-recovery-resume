@@ -3,7 +3,7 @@
 set -u
 cd "$(dirname "$0")/.."
 rc=0
-for f in test/*.test.mjs; do
+for f in tests/*.test.mjs; do
   echo "════════ $f ════════"
   node "$f" || rc=1
   echo

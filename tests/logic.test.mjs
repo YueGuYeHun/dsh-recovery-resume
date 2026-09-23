@@ -2,7 +2,7 @@
  * 判据单测：inspectTail / renderResumePrompt / decideRearm
  *
  * 零依赖，脱离 DSH 直接跑：
- *   node test/logic.test.mjs
+ *   node tests/logic.test.mjs
  *
  * 为什么这些用例值得单独立文件：这条链上最容易出错的就是"判据"本身 ——
  * 开发过程中我写错过好几个"看起来合理"的判据（陈旧锁用 stat 取 mtime 恒真、

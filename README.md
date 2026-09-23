@@ -76,7 +76,7 @@ log lines and what each one means.
 ## Tests
 
 ```sh
-bash test/run.sh    # 82 cases, zero dependencies, DSH does not need to be running
+bash tests/run.sh    # 82 cases, zero dependencies, DSH does not need to be running
 ```
 
 ## Limitations

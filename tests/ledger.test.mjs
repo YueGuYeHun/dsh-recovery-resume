@@ -2,7 +2,7 @@
  * 账本单测：跨重启的续跑上限与冷却
  *
  * 零依赖，脱离 DSH 直接跑：
- *   node test/ledger.test.mjs
+ *   node tests/ledger.test.mjs
  *
  * 为什么这些用例最重要：账本是**防失控**的唯一屏障。没有它就会出现
  * "崩 → 续 → 崩 → 续"的无上限循环，每一圈都在烧 token。

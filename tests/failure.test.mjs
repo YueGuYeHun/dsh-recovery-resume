@@ -2,7 +2,7 @@
  * 失败分类单测：failureFacts / isTransientFailure
  *
  * 零依赖，脱离 DSH 直接跑：
- *   node test/failure.test.mjs
+ *   node tests/failure.test.mjs
  *
  * ⚠️ 这套提取逻辑**没有真实样本对照过**：本机会话里 `reason=error` 的事件一条都没有
  * （实测全是 completed / interrupted / aborted）。所以这里的用例都是按 DSH 的

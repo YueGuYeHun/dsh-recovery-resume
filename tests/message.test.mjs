@@ -2,7 +2,7 @@
  * 消息构造器单测：buildUserMessage
  *
  * 零依赖，脱离 DSH 直接跑：
- *   node test/message.test.mjs
+ *   node tests/message.test.mjs
  *
  * 为什么这个文件必须存在 —— 它钉的是**移植性修复之后不能退化的四件事**：
  *
