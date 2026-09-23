@@ -4,7 +4,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) pl
 resumes a turn interrupted by a host restart — and makes the agent **verify real-world
 state first** instead of blindly sending "continue".
 
-中文 | [English](README.zh.md)
+中文 | [English](README.En.md)
 
 ## Why
 
