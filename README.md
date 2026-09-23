@@ -1,52 +1,29 @@
 # dsh-recovery-resume
 
-**DSH 宿主重启后，自动把被中断的任务接起来继续做 —— 并且要求 Agent 先核对真实状态，而不是简单发一句「继续」。**
+**DSH 重启后，自动把被中断的任务接起来继续做 —— 并且要求 Agent 先核对真实状态，而不是简单发一句「继续」。**
 
 > **English summary** — A DSH host plugin that resumes turns interrupted by a host
-> restart/crash. It hooks `agent/created` / `agent/status → idle` (i.e. the moment a
-> session actually becomes live), reads the recovered session log for a trailing
-> `turn/end` with reason `interrupted`, and enqueues a continuation message that
-> **requires the agent to verify real-world state first** (never assume a side effect
-> succeeded or failed). It also re-arms an `active` goal so goal rounds keep advancing.
-> Cross-restart attempt limits and a cooldown prevent runaway resume loops.
+> restart or crash. It hooks `agent/created` / `agent/status → idle` (the moment a
+> session actually becomes live), reads the trailing `turn/end reason=interrupted`
+> that DSH's own crash repair writes, and enqueues a continuation message that
+> **requires the agent to verify real-world state first** — never assume a side
+> effect succeeded or failed. It also re-arms an `active` goal so goal rounds keep
+> advancing. Cross-restart attempt limits and a cooldown prevent runaway resume loops.
 > Written and tested against DSH `0.1.6-alpha.1` on macOS 13 (Intel).
 
 ---
 
-## 为什么需要它
+## 它解决什么问题
 
-DSH 自己**不**保证"重启后任务接着做"。它保证的是另外两件事：
+DSH 保证「重启后**会话还在**」——你重新打开就能看到原来的对话，被截断的回合也会被补上
+`turn/end reason=interrupted`。但它**不会**因此做任何事：那个回合就静静躺在事件流里，
+**直到有人再发一条消息**。所以你会看到：窗口回来了、对话在，但 Agent 不动了。
 
-| DSH 已经有的 | 说明 |
-|---|---|
-| **会话恢复** | 客户端把 `{sessionId}` 存进浏览器 localStorage（键 `dsh.sessions.current`），页面重载后重连 —— 所以你重启后**能看到原来的对话** |
-| **崩溃修复** | `dsh-session` 的 `interruptedTurnClosers`（由 `dsh-agent-loop` 在加载会话时调用）会给未闭合的回合补上合成事件：`TOOL_NOT_STARTED` / `TOOL_OUTCOME_UNKNOWN` + 一条 `turn/end`，reason = `interrupted` |
+这个插件补的就是这一环：它等着会话真正活起来，然后替你把任务接上。
 
-但它**不会**因为这些去做任何事：新宿主起来后，那个被打断的回合就静静躺在事件流里，
-**直到有人再发一条消息**。于是现象是：窗口回来了、对话在、但 Agent 像下班了一样不动。
-
-这个插件补的就是这一环。
-
-### 与现成方案的区别
-
-社区里已有 `dsh-client-auto-continue`（作者 HsiangNianian，MIT）。它**功能更全**
-（错误分类、退避、循环守卫、通知按钮），本插件是**独立实现**，只解决其中一件事。
-两者在**扫描时机**上有关键差异（以下断言的源码出处为 `dsh-client-auto-continue`
-**0.11.7** 的 `src/host/engine.ts`，行号可复核）：
-
-| | `dsh-client-auto-continue` 0.11.7 | `dsh-recovery-resume` |
-|---|---|---|
-| 触发时机 | 宿主启动后**立即**扫描（`engine.ts:258` `void this.bootScanLoop()` → `:1006 scanLoop(Infinity, 3000)`） | `agent/created` / `agent/status → idle`，即**会话真正活起来之后** |
-| 扫描范围 | `for (const agent of this.ctx.agents.list())`（`engine.ts:1044`）—— **只扫 live agents** | 同上，但因为在会话激活后才触发，候选集**不为空** |
-| 扫完之后 | `if (await this.scanInterrupted()) return;`（`engine.ts:1013`）—— **扫一次即退出，不再复查** | 每次 agent 变 idle 都会重新判断 |
-
-**为什么这个差异是决定性的**：宿主启动后 3 秒，那个会话通常**还没有变成 live agent**
-（没有人打开它 —— 页面还没加载完）。于是候选集为空、扫描"成功"返回、之后再也不会看第二眼。
-等页面加载、会话激活时，已经没有任何东西会回头检查了。
-
-> 这不是本机特有的现象，而是上面三条控制流直接推出的结论。本机实测：
-> 4 次宿主崩溃中断之后，`auto-continue` 每次都只打一行「已启动」，
-> 没有任何判定日志、没有任何续跑消息（判据见「日志」一节）。
+**续跑消息不是「继续」两个字。** 重启之后外部世界可能已经变了（下载到一半、推送成功但
+没记下结果），所以消息要求 Agent **先查证据再动手**：确认中断前那一步到底做成了没有，
+不确定就用幂等的方式重做，确认之后再从正确的位置接着走。**不许假定成功，也不许假定失败。**
 
 ---
 
@@ -61,319 +38,116 @@ git clone https://github.com/flandre2233/dsh-recovery-resume.git
 dsh plugin --profile web add link:"$(pwd)/dsh-recovery-resume"
 ```
 
-> 没装 `gh` 也能用：`dsh plugin add` 走的是包管理器，`github:` 形式会克隆默认分支的构建产物。
-> 本仓库不含构建步骤（纯 JS，无编译），克隆下来即可用。
+装完**重启 DSH**（host 侧插件不会热加载）。
 
-装完**重启 DSH**（宿主侧插件不会热加载）：
-
-```bash
-~/.dsh/bin/cycle.sh          # 如果你有配套的 cycle 脚本
-# 或者：退出 app 再打开
-```
-
-### 依赖说明：零宿主依赖（不需要 `node_modules`）
-
-本插件**不 import 任何 `@deepseek-ai/*` 包**，运行时只依赖 Node 内置模块
-（`node:crypto`/`node:fs`/`node:path`）。所以 clone 下来直接装即可，
-**不需要**在自己的插件目录里造软链，也不会有"解析不到宿主包"的崩溃。
-
-这一点是**实测确认**的，不是设计声明：把插件目录里的 `node_modules/` 整个删掉后，
-`import(插件入口)` 仍然成功，并且导出 `apply`/`name` 两个符号。
-
-历史说明（给读旧版本的你）：**初版**曾 `import { createUserMessage }
-from '@deepseek-ai/dsh-llm'`。那个包只在 DSH 安装目录里，且插件目录里的软链指向
-**绝对路径**、又被 `.gitignore` 挡住 —— 意味着**别人 clone 下来装，会直接崩**
-（实测：临时移走软链后立刻 `MODULE_NOT_FOUND`）。
-现在消息构造器内联在 `lib/message.js`，只有 4 个字段（`id`/`role`/`content`/`source`），
-安全性依据见该文件头部注释（宿主不校验消息、`id` 只需唯一、`source` 是纯数据）。
-
-### 为什么没有 `peerDependencies`
-
-不需要。**判断依据是实测而非推测**：本插件对宿主能力的依赖全部通过挂载点的 `ctx`
-（`ctx.inject(['agents', 'goals'])`、`ctx.goals.resume`）与运行时对象
-（`session.snapshotEvents()`、`agent.followup()`）发生 —— 这些**不走模块解析**，
-所以没有需要声明的包。
-
-（附带一条实测记录，供其他插件作者参考：awesome-dsh-plugin 的贡献指南建议给官方
-`@deepseek-ai/*` 包声明"带显式预发布分支"的 peer 范围，例如
-`>=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0`。**实测这个范围匹配不到任何当前版本**：
-node-semver 7.8.5 下它对 `0.1.6-alpha.1` 与 `0.1.7-alpha.2` 都返回 `false`。
-原因是 semver 的预发布规则**逐元组**生效：只有范围内某个比较符的
-`major.minor.patch` 与目标版本完全一致、且自身带预发布标签时，该预发布版本才被放行。
-上面示例的比较符落在 `0.1.0` 元组，而实际版本是 `0.1.6-*`，于是被静默排除。
-能匹配的写法都必须钉死在具体元组上（`>=0.1.6-alpha.1 <0.2.0-0`），
-**没有一个范围能表达"覆盖整条 0.1.x 预发布线"**。这条记录不影响本插件，因为本插件没有 peer 依赖。）
+**零外部依赖**：不 import 任何 `@deepseek-ai/*` 包，运行时只用 Node 内置模块
+（`node:crypto` / `node:fs` / `node:path`），也不需要 `node_modules`。
+所以 GitHub 装或本地装都一样，不会有"解析不到包"的崩溃。
 
 ---
 
-## 工作方式
+## 它是怎么判断的
 
-```
-宿主崩溃 / 被重启
-      │
-      ▼
-新宿主启动 → 会话被打开 → agent 创建（status=idle）
-      │                       │
-      │                       └──► 本插件在这里触发（延迟 3s 让崩溃修复先完成）
-      ▼
-会话事件流里已有 turn/end reason=interrupted（由 DSH 的崩溃修复写入）
-      │
-      ▼
-判据：尾部最后一条 turn/end 的 reason ∈ {interrupted, error, max-tokens}
-      且其后没有 turn/start、没有 source.kind === 'user' 的消息
-      且时间足够新（15 分钟内）
-      │
-      ▼
-账本检查：跨重启续跑次数 < 3？距上次续跑 ≥ 5 分钟？
-      │
-      ├── 不通过 → 只写日志，停下等人
-      ▼
-投出续跑消息（agent.followup）→ 记一次账
-      │
-      ▼
-若目标仍是 phase=active 且未用尽轮次 → 重新武装 goal（延后 1.5s，让续跑消息先占住这一轮）
-      │
-      ▼
-Agent 自己核对状态、接着做
-```
+判据很窄，**宁可不动作也不误动作**。只有下面几条同时成立才续跑：
 
-### 续跑消息长什么样
-
-**不是**「继续」两个字。重启期间外部世界可能已经变了（下载到一半、`git push` 成功但没落记录、
-文件只写了一半），所以消息**要求先核对**：
-
-```xml
-<recovery_resume>
-这台机器上的 DSH 刚刚重启过（宿主进程被换掉了），你上一回合因此被中断。
-中断原因：interrupted。
-中断前最后一个工具调用是「bash」—— 它可能已经执行成功、执行到一半、或根本没跑起来。
-
-继续之前**必须先核对真实状态**：
-1. 先看工作区 / 进程 / 日志，确认中断前那一步到底做成了没有 —— 不要根据对话历史假定它成功，也不要假定它失败。
-2. 如果那一步的结果不确定（下载进度、推送是否真的成功、文件写到哪个程度），去查实际证据；必要时用幂等的方式重做。
-3. 确认实际状态之后，从正确的位置接着做，不要重复已经完成的动作。
-
-做完要给出可复核的证据（命令输出、文件内容、退出码）。如果无法继续（缺前提、外部不可用），如实说明并停下。
-</recovery_resume>
-```
-
-`{最后一个工具调用}` 是从事件流里回溯出的最后一条 `tool/call`，用来告诉 Agent
-**哪一步的结局没被确认**。
-
-### 最小上下文（不重述历史）
-
-续跑消息**故意不重述上下文**，只补三样 agent 自己查不到、或不值得再翻一遍的东西：
-
-| 注入内容 | 来源 | 上限 |
-|---|---|---|
-| 断在第几回合 | 事件流的 `data.turn` | — |
-| **结局未确认**的工具调用 | 结构性标记 `data.error.code = TOOL_OUTCOME_UNKNOWN` / `TOOL_NOT_STARTED`（DSH 崩溃修复写入） | 3 个 |
-| 中断前最后一条 assistant 文本 | `assistant/message` | 240 字符 |
-
-**为什么这么做**（都是实测/源码依据，不是拍脑袋）：
-
-- 一个挂满工具的会话，第一轮基线约 **41K tokens**。插件注入的这点量相比之下可以忽略；
-  真正的浪费是**让 agent 重新翻一遍历史**。
-- DSH 的崩溃修复**已经把"结局未知的工具调用"写进了模型可见的历史**（`tool/result`
-  带 `error.code = TOOL_OUTCOME_UNKNOWN`；本机实测某会话此类事件结构性出现 27 次）。
-  所以那类信息**不必重复注入**，只挑真正需要重述的几样。
-- 提取逻辑只认**结构性**标记：那个码在会话里既出现在结构字段里，也出现在正文文本里
-  （本机实测 27 : 14）。把正文里的同名字符串当成标记，会提取出假关键点 —— 有单测钉死这一点。
-
-本机用真实会话事件流（7220 条事件）验证过：提取出的关键点约 **313 字符 ≈ 90 tokens**，
-是基线上下文的 **0.22%**。上限由 `lib/context.js` 的 `MAX_ASSISTANT_CHARS` /
-`MAX_UNCONFIRMED` 控制；提取失败**不影响续跑**（关键点是优化，不是必需品）。
-
----
-
-## 防失控（三层限制）
-
-这是本插件最需要注意的部分。没有它会出现**无上限的烧钱循环**：
-
-```
-任务被中断 → 重启 → 续跑 → 又中断 → 又重启 → 又续跑 → …（没有东西会叫停）
-```
-
-| 层 | 限制 | 位置 |
-|---|---|---|
-| 1 | **永久性失败不续跑** —— 判据优先用 **DSH 官方码表**（`@deepseek-ai/dsh-llm/retry-policy` 的 `DEFAULT_RETRYABLE_CODES`：`EMPTY_RESPONSE`/`RATE_LIMIT`/`SERVER`/`TIMEOUT`/`TRANSPORT`），已知永久码（`AUTH`/`INVALID_CREDENTIAL`/`QUOTA`/`CONTEXT_WINDOW_EXCEEDED`）与 401/403 直接拦下 | `lib/failure.js` |
-| 2 | 同一宿主内，同一会话最多续 **1** 次 | `MAX_ATTEMPTS_PER_SESSION` |
-| 3 | **跨重启**最多续 **3** 次（落盘） | `lib/ledger.js` → `MAX_ATTEMPTS_ACROSS_RESTARTS` |
-| 4 | **自适应退避**：冷却从 5 分钟起翻倍（5 → 10 → 20 → 30 封顶）；**但续跑成功则清零**（见下） | `lib/ledger.js` → `effectiveCooldown` / `detectProgressSinceLastAttempt` |
-
-### 两条来自真实测试的修正（2026-09-23）
-
-这两条都是**先做了真实链路测试**才发现的，单测和代码审查都没抓到：
-
-1. **错误码漏了 `TRANSPORT`**。第一版我用自己写的正则匹配失败消息，而网络失败的真实码是
-   `TRANSPORT`（`dsh-llm-deepseek` 抛的："DeepSeek Messages transport failed"），
-   正则表里没有它 → 被判成"无法判定"。**修正：改用 DSH 官方的
-   `DEFAULT_RETRYABLE_CODES` 码表**（出处 `@deepseek-ai/dsh-llm/retry-policy`），
-   比自编正则可靠，宿主升级时跟着更新即可。
-2. **自适应退避把成功的续跑也惩罚了** —— 这条更严重。原来的链是：
-   *续跑成功 → 任务继续 → 又被打断 → 冷却已被翻倍到 20 分钟 → **被自己的防失控挡住***。
-   实测日志原文：「距上次续跑仅 243s，冷却中（本次冷却 1200s，还需 957s）」。
-   **修正：退避只惩罚"连续失败"** —— 如果这次的 `turn/end` 比上次续跑时记录的
-   `lastTurnSeq` 更新，说明上次续跑之后任务确实往前走了 → 判定成功 → 计数与冷却清零。
-
-第 1 层和第 4 层是借鉴 `dsh-client-auto-continue` 的做法（它的 `isTransientFailure`
-与 `backoffFactor`）。第 1 层解决的是「上次因为是 API key 无效而失败，续跑必然再失败
-一次，白烧一轮」；第 4 层解决的是「固定 5 分钟在持续失败时会稳定地一直烧下去」。
-
-**没有借鉴它的循环守卫**：那 4 个信号（连续相同消息 / 流式近似重复 / 短句空转 /
-同工具同参数重复）都来自**对运行中回合的实时观察**，而本插件只在宿主重启后触发，
-拿不到这些信号 —— 照搬会变成死代码。
-
-超过任一层限制时**只写日志、不再自动续跑**，把决定权交回给人。
-
-账本文件：`$DSH_HOME/recovery-attempts.json`（默认 `~/.dsh/recovery-attempts.json`），
-原子写入（先写 `.tmp` 再 rename），自动清理 7 天前的会话条目。
-
-```json
-{
-  "session-d7fb7b06-…": { "attempts": 2, "lastAt": 1789726800000, "history": [1789710000000, 1789726800000] }
-}
-```
-
-### 关于重新武装 goal
-
-goal 的 `activation` 是**进程内**状态（DSH 源码注释原文：`process-local activation state,
-initially disarmed`、`activation is deliberately absent`），所以每次宿主启动都会被 disarm ——
-这正是 DSH 界面上「未运行的目标」（`phase.active.disarmed`）的含义。
-
-本插件会把它重新武装（等同于点界面上那个按钮，调用 `ctx.goals.resume(agent, {id, revision})`），
-**但只对 `phase === "active"` 的目标动手**：该 API 在源码里同时接受 `paused` 与 `blocked`，
-无条件调用会覆盖用户主动暂停的目标。这条红线有单测钉死。
-
----
-
-## 日志与排查
-
-插件用 `console.log` / `console.error` 直写（**不是** `ctx.logger` —— 实测
-`ctx.logger.info` 的输出在宿主日志里找不到，用它排查会白费一轮）。输出进宿主的 stdout，
-即 `$DSH_HOME/host.log`。
-
-一次成功的续跑长这样：
-
-```
-[dsh-recovery-resume] apply() 被调用 —— 插件已加载
-dsh-recovery-resume: agent 创建 id=session-… status=idle
-dsh-recovery-resume: agent 状态 id=session-… -> running
-dsh-recovery-resume: session-… 无需续跑（尾部没有未处理的非人为中断）        ← 正常会话
-dsh-recovery-resume: ★ session-… 发现未处理的中断（reason=interrupted turnSeq=6805 lastTool=bash）→ 发送续跑消息
-dsh-recovery-resume: 续跑消息已入队 session-…（messageId=…）
-dsh-recovery-resume: 账本已更新 session-… → 累计续跑 2 次（跨重启上限 3，冷却 300s）
-dsh-recovery-resume: ★ 已重新武装 goal goal-…（revision=2）→ 目标可继续推进
-```
-
-被限制挡住时（这是**预期的**，不是故障）：
-
-```
-dsh-recovery-resume: 跳过 session-…（跨重启已续跑 3 次（上限 3），停下等人确认）
-dsh-recovery-resume: 跳过 session-…（距上次续跑仅 42s，冷却中（还需 258s））
-dsh-recovery-resume: 不重新武装 goal（phase=complete（只处理 active））
-```
-
-**确认插件到底有没有被加载**，用 DSH 自己的权威命令（会打印组合后的插件树）：
-
-```bash
-dsh --profile web --dump-config | grep -A2 recovery-resume
-```
-
-### 常见问题
-
-| 现象 | 原因 / 处理 |
+| 条件 | 为什么 |
 |---|---|
-| `host.log` 里一行 `dsh-recovery-resume` 都没有 | 插件没被加载：先跑上面的 `--dump-config`；确认装完**重启过**宿主 |
-| `读不到 … 的事件流（既没有 snapshotEvents() 也没有 events）` | DSH 版本的会话 API 变了。当前写法：优先 `session.snapshotEvents()`，回退属性 `session.events` |
-| `Cannot find package '@deepseek-ai/dsh-llm'` | **0.1.0 之前版本的问题，现已不存在** —— 插件改为零宿主依赖（见上面「依赖说明」）。如果还见到这个报错，说明装的是旧版本 |
-| 插件把整棵树搞崩、DSH 起不来 | 从 `$DSH_HOME/profiles/web/package.json` 的 `dependencies` 与 `dsh.profile.bundles` 里删掉本插件，再 `dsh plugin --profile web install` |
+| 事件流最后一条 `turn/end` 的 reason 是 `interrupted` / `error` / `max-tokens` | 这三种才代表"非正常结束"；`completed` / `aborted`（你主动停）都不动 |
+| 它之后**没有** `turn/start`、也**没有**你发的消息 | 有的话说明已经有人处理过了，不该再插手 |
+| 中断发生在 **15 分钟**内 | 更早的不翻旧账 —— 你可能早就手动处理完了 |
+| 会话真的活了（`agent/created` 或 `agent/status → idle`） | 这正是插件挂载点的意义：DSH 自己的崩溃修复写完 `turn/end` 之后才轮到它 |
+
+**一个例外：永久性失败不续跑。** 如果上次失败是认证问题（`AUTH`/401）、配额耗尽、
+上下文超限这类重试无益的原因，插件直接跳过并记日志 —— 不会拿你的钱去撞墙。
+判断用的是 **DSH 官方错误码表**（`DEFAULT_RETRYABLE_CODES`），不是自编正则。
+
+---
+
+## 防失控（三层）
+
+「崩 → 续 → 崩 → 续」如果没人叫停，每一圈都在烧 token。所以有三层限制：
+
+| 层 | 限制 | 边界 |
+|---|---|---|
+| 1 | 同一进程内，同一会话最多续 **1** 次 | 进程内计数 |
+| 2 | **跨重启账本**：连续未成功最多 **3** 次 | `$DSH_HOME/recovery-attempts.json` |
+| 3 | 两次续跑至少间隔 **5 分钟** | 挡住紧密循环 |
+
+**退避只惩罚失败**：如果两次尝试之间任务有进展（事件流序号前进了），计数**清零** ——
+不会因为你连续重启了几次就把你锁在门外。账本 7 天后自动清理。
+
+超限时插件**只写日志、停下等人**，不做任何动作。
+
+另外它会**重新武装 `active` 状态的 goal**（就是界面上那个"继续"按钮用的同一个 API），
+让目标自己继续推进；**`paused` / `blocked` 的目标绝不动** —— 那是你主动停的。
+
+---
+
+## 怎么确认它在工作
+
+```bash
+# 1. 插件确实被加载了（权威判据：打印组合后的插件树）
+dsh --profile web --dump-config | grep -A2 recovery-resume
+
+# 2. 看它每一步的判断（所有输出都带 dsh-recovery-resume 前缀）
+tail -50 ~/.dsh/host.log | grep dsh-recovery-resume
+```
+
+正常触发时会长这样（真实日志）：
+
+```
+dsh-recovery-resume: agent 创建 id=session-xxx status=idle
+dsh-recovery-resume: ★ 发现未处理的中断（reason=interrupted turnSeq=8451 lastTool=bash）
+dsh-recovery-resume: 续跑消息已入队 session-xxx
+dsh-recovery-resume: 已重新武装 goal xxx
+```
+
+**什么都没发生**时的常见说法（都是正常的，不是故障）：
+
+| 日志 | 含义 |
+|---|---|
+| `无需续跑（尾部没有未处理的中断）` | 上次是正常结束 / 你已经处理过了 |
+| `跳过 …（上次失败是永久性的…）` | 认证、配额、上下文超限 → 重试无益，正确行为 |
+| `跳过 …（本次进程已续跑 1 次）` | 一层限制生效 |
+| `冷却中（还需 N 秒）` | 三层限制生效 |
+| 一行日志都没有 | 插件没被加载 —— 先跑上面的 `--dump-config` |
 
 ---
 
 ## 测试
 
-`lib/logic.js` 与 `lib/ledger.js` **零依赖**（不 import 任何 DSH 包），
-所以可以脱离 DSH 直接单测 —— 这也是把它们单独拆出来的原因：判据是整件事最容易出错的部分。
-
 ```bash
-bash test/run.sh          # 跑全部；单文件也可以：node test/logic.test.mjs
+bash test/run.sh          # 共 82 个用例，零依赖，不需要 DSH 在运行
 ```
 
-每个用例都钉一个边界，尤其偏重「**不该动**」的情形：用户主动暂停 / blocked / aborted 的
-目标绝不重新武装、太老的中断不翻旧账、账本到上限后等再久也不放行。
-
-（本机实测：`logic` 22/22、`ledger` 19/19、`context` 11/11、`failure` 17/17、`message` 13/13，共 82 个用例，`bash test/run.sh` 退出码 0。）
-
-### 真实验证记录（2026-09-23）
-
-单测之外，三条判据分支都在**真实环境**里跑过一遍。做法是临时把
-`api.deepseek.com` 解析到 `127.0.0.1`（黑洞）来制造真实的模型调用失败，
-再重启宿主观察插件行为。
-
-| 分支 | 做法 | 观测到的证据（`host.log` / 会话事件流原文） |
-|---|---|---|
-| **临时性失败 → 续跑** | 黑洞造成 `code=TRANSPORT` 失败 | `★ 发现未处理的中断（reason=error turnSeq=…）→ 发送续跑消息`；事件流出现 `user/message source=dsh-recovery-resume` |
-| **永久性失败 → 跳过** | 临时写入无效 API key 造成 `code=AUTH status=401` | `跳过 …（上次失败是永久性的，重试无益：HTTP 401（认证/权限） code=AUTH）`，且**没有**续跑消息 |
-| **宿主重启截断 → 续跑 + 重新武装 goal** | `cycle` 重启宿主 | 续跑消息 + `goal/change op=resume`，随后 goal 驱动器自己开了下一轮 |
-
-完整链条（**全程没有任何 `source=user` 消息**，即无人参与）：
-
-```
-turn/end  reason=error  code=TRANSPORT      ← 真实失败
-user/message  source=dsh-recovery-resume    ← 插件续跑（error 分支）
-goal/change  op=resume                      ← 重新武装 goal
-turn/end  reason=interrupted                ← 宿主重启截断
-user/message  source=dsh-recovery-resume    ← 插件续跑（interrupted 分支）
-user/message  source=goal  round=1          ← goal 驱动器自己开轮
-```
-
-> ⚠️ 这些测试需要临时改 `/etc/hosts`，是**有风险的操作**。本仓库不提供自动化脚本 ——
-> 第一次尝试时我因为用 `shutil.copy2`（没带 `sudo`）去还原而失败，**把机器断网了 13 分钟**。
-> 如果将来要复现：① 改动前先用 `sudo -n` 在**目标文件真实路径**上演练"写回"；
-> ② 准备好干净备份与一条人工恢复命令；③ 注意"常驻自愈守护"与"保住故障窗口"是互斥的。
+用例偏重「**不该动**」的情形：你主动暂停 / `blocked` / `aborted` 的目标绝不重新武装、
+太老的中断不翻旧账、账本到上限后等再久也不放行、消息 id 必须唯一。
 
 ---
 
 ## 已知限制
 
-- **只在 DSH `0.1.6-alpha.1` + macOS 13（Intel）上实测过**。会话事件与 agent 生命周期
-  属于 DSH 内部 API，**cross-version 兼容性没有保证**；升级 DSH 后请重新跑一遍测试。
-- **"新鲜度"窗口固定 15 分钟**（`FRESH_MS`）。超过就不翻旧账 —— 一个几小时前的中断
-  未必还该自动接着做。目前不可配置。
-- **不判断"任务是否其实已经完成"**：判据只看 `turn/end` 的 reason 与之后有无新回合/用户消息。
-  如果任务在被中断前已经做完了，续跑会多问一轮（消息里要求先核对状态，属于预期行为，
-  但仍会消耗一轮）。DSH 的 goal 机制有 `complete` 动作可以表达"做完了"，本插件不代它判断。
-- **错误码表是抄 DSH 官方那份**（`@deepseek-ai/dsh-llm/retry-policy` 的 `DEFAULT_RETRYABLE_CODES`）。
-  DSH 升级后如果这张表变了，本插件需要跟着更新 —— 它的"可重试"判断直接依赖这份名单。
-- **真实测试覆盖到的是"模型调用失败"这一类**（TRANSPORT / AUTH）。工具执行失败、
-  上下文超限等其他失败形态没有单独造过真实场景，只走了单测。
-- **子代理会话不处理**（`session.header.origin === 'subagent'` 直接跳过，与上游一致）。
-- 多标签页/多窗口同时打开同一会话时，靠**宿主侧单实例**与账本去重；本插件本身没有锁。
-
----
+- **只有 host 侧重启才触发。** 你没有重启、但模型调用失败（`error`）也会触发；
+  `completed` / `aborted` 不会。
+- **多标签页同时开同一会话**靠 host 侧单实例与账本去重，插件本身没有锁。
+- **只在 macOS 13 (Intel) + DSH `0.1.6-alpha.1` 上实测过。** 插件只用公开的
+  `ctx` / `session` / `agent` 接口，理论上跨平台，但其他环境没有实测数据。
+- **它不恢复"未完成的外部操作"。** 推送、下载、部署这类副作用是否真的完成，
+  只能由 Agent 按消息里的要求去查证 —— 插件不替它判断。
 
 ## 卸载
 
 ```bash
-# 1. 从 profile 移除（两处都要干净：dependencies 与 dsh.profile.bundles）
 dsh plugin --profile web remove dsh-recovery-resume
-
-# 2. 删账本（可选）
-rm ~/.dsh/recovery-attempts.json
-
-# 3. 重启宿主
 ```
 
----
+账本文件 `$DSH_HOME/recovery-attempts.json` 可以留着（7 天自动清理），也可以直接删。
+
+## 详细的判断依据与验证记录
+
+设计推理、源码出处、真实环境验证记录、错误码表出处、以及每次修正背后的实测，
+都放在 [`docs/notes.md`](docs/notes.md) —— **README 保持简短，细节给想深挖的人**。
 
 ## 许可
 
-MIT（见 `LICENSE`）。
-
-## 致谢
-
-- 挂载点与消息构造方式参考了 DSH 自带的 `dsh-goal-round-driver`
-  （`ctx.on('agent/created' / 'agent/status')` + `createUserMessage` + `agent.followup`）。
-- 社区插件 `dsh-client-auto-continue` 在本插件之前就探索了这个问题域，
-  其 `snapshotSessionEvents()` 的版本兼容写法被本插件借鉴（回退链）。
+MIT，见 [LICENSE](LICENSE)。

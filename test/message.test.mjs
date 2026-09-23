@@ -6,7 +6,7 @@
  *
  * 为什么这个文件必须存在 —— 它钉的是**移植性修复之后不能退化的四件事**：
  *
- *   ① **不许再引入宿主包 import**。0.1.0 之前这里 import
+ *   ① **不许再引入 host 包 import**。0.1.0 之前这里 import
  *      `@deepseek-ai/dsh-llm` 的 `createUserMessage`，而那个包只在 DSH 安装目录里、
  *      插件目录里的软链又指向绝对路径 → 别人 clone 下来装会 `MODULE_NOT_FOUND`
  *      直接崩。本文件用「子进程真的去加载一遍模块」来钉住这件事，而不是读源码猜。
@@ -55,7 +55,7 @@ test('role 固定是 user（构造器不接受覆盖）', () => {
   assert.equal(m.role, 'user')
 })
 
-test('source 原样带过去（宿主靠 kind+plugin 认领消息）', () => {
+test('source 原样带过去（host 靠 kind+plugin 认领消息）', () => {
   const m = buildUserMessage({ content: [], source: SOURCE })
   assert.equal(m.source.kind, 'dsh-recovery-resume')
   assert.equal(m.source.plugin, 'dsh-recovery-resume')
@@ -67,7 +67,7 @@ test('id 是 UUID 形状（randomUUID 的产物）', () => {
   assert.match(m.id, UUID_V4)
 })
 
-test('连续两次调用 id 不同（宿主用 Set 去重，撞了会抛错）', () => {
+test('连续两次调用 id 不同（host 用 Set 去重，撞了会抛错）', () => {
   const ids = new Set()
   for (let i = 0; i < 200; i += 1) ids.add(buildUserMessage({ content: [], source: SOURCE }).id)
   assert.equal(ids.size, 200, '200 次调用必须得到 200 个不同 id')
@@ -107,9 +107,9 @@ test('端到端：真实续跑文案装进消息后形状仍合法', () => {
   assert.match(text, /核对|确认|实际状态/)
 })
 
-// ── ④ 移植性：模块加载不许依赖任何宿主包 ─────────────────────────────────────
+// ── ④ 移植性：模块加载不许依赖任何 host 包 ─────────────────────────────────────
 test('在干净环境下导入 lib/message.js 不需要任何 @deepseek-ai 包', () => {
-  // 用子进程 + 空白解析路径跑，证明"零宿主依赖"是真的靠模块系统做到的，
+  // 用子进程 + 空白解析路径跑，证明"零 host 依赖"是真的靠模块系统做到的，
   // 而不是靠本机恰好存在的 node_modules 软链。
   const script = `
     const m = await import(${JSON.stringify(join(ROOT, 'lib', 'message.js'))});
@@ -125,14 +125,14 @@ test('在干净环境下导入 lib/message.js 不需要任何 @deepseek-ai 包',
   assert.equal(out.trim(), 'ok')
 })
 
-test('lib/index.js 里不存在对宿主包的 import（防回归）', () => {
+test('lib/index.js 里不存在对 host 包的 import（防回归）', () => {
   const src = execFileSync('/bin/cat', [join(ROOT, 'lib', 'index.js')], { encoding: 'utf8' })
   const imports = [...src.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1])
   const hostImports = imports.filter((s) => s.startsWith('@deepseek-ai/'))
-  assert.deepEqual(hostImports, [], `入口不许 import 宿主包，发现：${hostImports.join(', ')}`)
+  assert.deepEqual(hostImports, [], `入口不许 import host 包，发现：${hostImports.join(', ')}`)
 })
 
-test('整个 lib/ 目录都不 import 宿主包（防回归）', () => {
+test('整个 lib/ 目录都不 import host 包（防回归）', () => {
   const files = ['index.js', 'logic.js', 'ledger.js', 'context.js', 'failure.js', 'message.js']
   const offenders = []
   for (const f of files) {
@@ -143,7 +143,7 @@ test('整个 lib/ 目录都不 import 宿主包（防回归）', () => {
       if (/from\s+'@deepseek-ai\//.test(line)) offenders.push(`${f}: ${line.trim()}`)
     }
   }
-  assert.deepEqual(offenders, [], `发现宿主包 import：\n${offenders.join('\n')}`)
+  assert.deepEqual(offenders, [], `发现 host 包 import：\n${offenders.join('\n')}`)
 })
 
 test('package.json 不再声明 peerDependencies（没有需要声明的包了）', async () => {

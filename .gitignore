@@ -1,4 +1,5 @@
-# 宿主包软链（为了让 @deepseek-ai/* 解析得到，见 README「依赖说明」）
+# 本插件是零外部依赖：不 import 任何 @deepseek-ai/* 包，装在本地也不需要 node_modules。
+# 若你的开发环境里出现了 node_modules（例如编辑器自动装的），忽略它即可。
 node_modules/
 
 # 编辑器 / 系统
