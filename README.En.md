@@ -3,7 +3,7 @@
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）插件：
 重启后被中断的回合自动接起来继续做 —— 而且要求 Agent **先核对真实状态**，不是简单发一句「继续」。
 
-[English](README.md) | 中文
+中文 | [English](README.En.md)
 
 ## 为什么需要它
 
